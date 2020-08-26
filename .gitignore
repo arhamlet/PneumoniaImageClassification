@@ -127,3 +127,9 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+
+# Project Files
+chest_xray/
+graphs/
+.idea
