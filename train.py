@@ -6,10 +6,14 @@ import torchvision.transforms as transforms
 import os
 import pandas as pd
 from skimage import io
-from torch.utils.data import Dataset
+import matplotlib.pyplot as plt
+from torch.utils.data import Dataset, SubsetRandomSampler
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 import time
+import torch.nn.functional as F
+import numpy as np
+import shutil
 
 learning_rate = 0.0001
 resume=None
@@ -26,8 +30,11 @@ init_padding=2
 validation_size=0.2
 random_seed=1
 in_channels = 3
-load_model = True
+load_model = False
 best_acc = 0
+classes = ('normal', 'bacteria', 'virus')
+
+
 #   checking accuracy
 def check_accuracy(loader, model):
     num_correct = 0
@@ -107,7 +114,48 @@ test_loader = DataLoader(dataset=test_set, batch_size=batch_size, shuffle=True)
 
 #   Tensorboard writer
 writer = SummaryWriter(log_dir='graphs')
-step = 0
+#step = 0
+
+def matplotlib_imshow(img):
+    #img = img / 2 + 0.5  # unnormalize
+    npimg = img.cpu().numpy()
+    npimg = np.transpose(npimg, (1, 2, 0))
+    plt.imshow((npimg * 255).astype(np.uint8))   #fixed error .astype('uint8')
+
+
+def images_to_probs(net, images):
+    '''
+    Generates predictions and corresponding probabilities from a trained
+    network and a list of images
+    '''
+    output = net(images)
+    # convert output probabilities to predicted class
+    _, preds_tensor = torch.max(output, 1)
+    preds = np.squeeze(preds_tensor.cpu().numpy())
+    return preds, [F.softmax(el, dim=0)[i].item() for i, el in zip(preds, output)]
+
+
+def plot_classes_preds(net, images, labels):
+    '''
+    Generates matplotlib Figure using a trained network, along with images
+    and labels from a batch, that shows the network's top prediction along
+    with its probability, alongside the actual label, coloring this
+    information based on whether the prediction was correct or not.
+    Uses the "images_to_probs" function.
+    '''
+    preds, probs = images_to_probs(net, images)
+    # plot the images in the batch, along with predicted and true labels
+    fig = plt.figure(figsize=(6, 6))
+    for idx in np.arange(4):
+        ax = fig.add_subplot(1, 4, idx+1, xticks=[], yticks=[])
+
+        matplotlib_imshow(images[idx])
+        ax.set_title("{0}, {1:.1f}%\n(label: {2})".format(
+            classes[preds[idx]],
+            probs[idx] * 100.0,
+            classes[labels[idx]]),
+                    color=("green" if preds[idx]==labels[idx].item() else "red"))
+    return fig
 
 print("Initializing Model")
 #   model
@@ -139,6 +187,7 @@ for epoch in range(epochs):
     losses = []
     total_batch_images = float(4856)
     batch_correct_pred = 0
+    step = 0
     # save model
     # if batch_accuracy>best_acc:
     #     best_acc = batch_accuracy
@@ -174,6 +223,11 @@ for epoch in range(epochs):
         _, predictions = scores.max(1)
         num_correct = (predictions == labels).sum()
         batch_correct_pred += float(num_correct)
+
+        writer.add_figure('predictions vs. actuals',
+                           plot_classes_preds(model, images, labels),
+                           global_step=step)      #epoch * len(train_loader) + batch_idx
+        step += 1
 
     print(batch_correct_pred)
     epoch_elapsed = (time.time() - epoch_start_time) / 60
